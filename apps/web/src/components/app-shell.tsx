@@ -29,7 +29,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const latestLog = logs[0] ?? { message: "System nominal", timeAgo: "" }
 
   return (
-    <div className="grid min-h-svh grid-cols-1 bg-lihok-surface text-lihok-ink lg:grid-cols-[244px_1fr]">
+    <div className="grid h-svh grid-cols-1 bg-lihok-surface text-lihok-ink lg:grid-cols-[244px_1fr]">
       {/* ── Sidebar ────────────────────────────────────────────────── */}
       <aside className="hidden border-r border-border bg-card lg:flex lg:flex-col">
         {/* Logo */}
@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* ── Main column ────────────────────────────────────────────── */}
-      <div className="grid min-h-svh grid-rows-[auto_1fr_64px] overflow-hidden">
+      <div className="grid h-svh grid-rows-[auto_1fr_64px] overflow-hidden">
         {/* Top bar */}
         <header className="border-b border-border bg-card px-4 py-3 lg:px-8">
           <div className="flex items-center justify-between gap-4">
