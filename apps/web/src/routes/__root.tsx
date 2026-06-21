@@ -7,6 +7,7 @@ import {
 
 import appCss from "@workspace/ui/globals.css?url"
 import { AppShell } from "@/components/app-shell"
+import { TooltipProvider } from "@workspace/ui/components/tooltip"
 
 export const Route = createRootRoute({
   head: () => ({
@@ -55,7 +56,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
+        <TooltipProvider>
+          {children}
+        </TooltipProvider>
         <Scripts />
       </body>
     </html>

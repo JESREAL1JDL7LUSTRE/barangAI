@@ -34,25 +34,39 @@ export const logs = [
   { message: "Flood reports linked into active cluster.", timeAgo: "8m ago" },
 ]
 
-export const smsFeed = [
+export type SmsStatus = "verified" | "processing" | "pending"
+
+export const smsFeed: { timestamp: string; origin: string; content: string; status: SmsStatus }[] = [
   { timestamp: "14:22:01", origin: "+63 917 555 1201", content: "Water is entering my garage, drain is blocked by trash, Zone 4.", status: "verified" },
   { timestamp: "14:18:45", origin: "+63 920 444 8832", content: "Road impassable near the chapel, high flooding.", status: "verified" },
   { timestamp: "14:15:30", origin: "+63 908 111 2293", content: "Emergency power cut needed in Zone 4 residential area.", status: "processing" },
 ]
 
-export const heatZones = [
+export type HeatDensity = "safe" | "moderate" | "high" | "critical"
+
+export interface HeatZone {
+  zone: string
+  label: string
+  density: HeatDensity
+  wideOnMd?: boolean
+}
+
+export const heatZones: HeatZone[] = [
   { zone: "ZONE 01", label: "Safe Level", density: "safe" },
-  { zone: "ZONE 02-03", label: "Increased Activity", density: "high" },
+  { zone: "ZONE 02-03", label: "Increased Activity", density: "high", wideOnMd: true },
   { zone: "ZONE 04", label: "Safe Level", density: "safe" },
   { zone: "ZONE 05", label: "High Density", density: "critical" },
   { zone: "ZONE 06", label: "Moderate", density: "moderate" },
-  { zone: "ZONE 07-08", label: "Critical Area", density: "critical" },
+  { zone: "ZONE 07-08", label: "Critical Area", density: "critical", wideOnMd: true },
   { zone: "ZONE 09", label: "Moderate", density: "moderate" },
   { zone: "ZONE 10", label: "Safe Level", density: "safe" },
   { zone: "ZONE 11-12", label: "Increased Activity", density: "high" },
 ]
 
-export const personnel = [
+export type PersonnelStatus = "online" | "busy" | "offline"
+export type PersonnelAction = "Deploy" | "Re-assign" | "Message"
+
+export const personnel: { name: string; location: string; status: PersonnelStatus; action: PersonnelAction }[] = [
   { name: "BDRRMC Team Alpha", location: "Sitio Mansanitas", status: "online", action: "Deploy" },
   { name: "BDRRMC Team Beta", location: "Main Highway", status: "busy", action: "Re-assign" },
   { name: "Cebu Patrol 02", location: "Banilad Flyover", status: "online", action: "Message" },

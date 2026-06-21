@@ -2,16 +2,12 @@ import { createFileRoute } from "@tanstack/react-router"
 import { Layers, LocateFixed, Minus, Plus, Siren } from "lucide-react"
 
 import { LeafletMap } from "@/components/leaflet-map"
+import { PersonnelCard } from "@/components/personnel-card"
+import { UrgencyBadge } from "@/components/urgency-badge"
 import { personnel } from "@/lib/mock-data"
 import { cn } from "@workspace/ui/lib/utils"
 
 export const Route = createFileRoute("/map")({ component: MapPage })
-
-const statusDot: Record<string, string> = {
-  online: "bg-status-verified",
-  busy: "bg-urgency-high",
-  offline: "bg-urgency-critical",
-}
 
 function MapPage() {
   return (
@@ -60,30 +56,13 @@ function MapPage() {
 
         <div className="grid gap-4">
           {personnel.map((unit) => (
-            <article key={unit.name} className="rounded-xl bg-card p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-bold">{unit.name}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{unit.location}</p>
-                </div>
-                <span
-                  className={cn(
-                    "mt-1 size-2 rounded-full",
-                    statusDot[unit.status] ?? "bg-muted-foreground",
-                  )}
-                />
-              </div>
-              <div className="mt-4 flex items-center justify-between border-t border-dashed border-border pt-3">
-                <span className="flex gap-1">
-                  {[0, 1, 2].map((dot) => (
-                    <span key={dot} className="size-4 rounded-full bg-muted" />
-                  ))}
-                </span>
-                <button className="text-sm font-semibold text-lihok-ink transition-colors hover:text-primary">
-                  {unit.action}
-                </button>
-              </div>
-            </article>
+            <PersonnelCard
+              key={unit.name}
+              name={unit.name}
+              location={unit.location}
+              status={unit.status}
+              action={unit.action}
+            />
           ))}
         </div>
 

@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 
 import { logs } from "@/lib/mock-data"
+import { TopBarSearch } from "@/components/top-bar-search"
 import { cn } from "@workspace/ui/lib/utils"
 
 const navItems = [
@@ -94,10 +95,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Top bar */}
         <header className="border-b border-border bg-card px-4 py-3 lg:px-8">
           <div className="flex items-center justify-between gap-4">
-            <div className="flex w-full max-w-md items-center gap-2 rounded-lg border border-input bg-muted px-3 py-2 text-sm text-muted-foreground">
-              <Search className="size-4 shrink-0" />
-              <span className="truncate">Search incidents, reports, or citizens...</span>
-            </div>
+            {/* Search */}
+            <TopBarSearch />
             <div className="flex items-center gap-4 text-muted-foreground">
               <Bell className="size-5" />
               <span className="grid size-7 place-items-center rounded-full border border-border text-xs font-semibold">
