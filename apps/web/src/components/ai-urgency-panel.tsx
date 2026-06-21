@@ -37,10 +37,10 @@ export function AiUrgencyPanel({
       }
       className={className}
     >
-      <p className="mt-5 text-6xl font-black tracking-[-0.08em]">
-        {score}
-        <span className="text-sm text-muted-foreground"> / {maxScore}</span>
-      </p>
+      <div className="mt-5 flex items-baseline gap-1">
+        <span className="text-6xl font-black tracking-[-0.08em]">{score}</span>
+        <span className="text-sm text-muted-foreground">/ {maxScore}</span>
+      </div>
       <Progress
         value={percentage}
         className="mt-4 h-3 bg-muted [&_[data-slot=progress-indicator]]:bg-primary"
