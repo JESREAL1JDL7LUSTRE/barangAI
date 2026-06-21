@@ -97,6 +97,13 @@ export interface ParsedReport {
    * If false, the report will not be stored in the database, but the replyDraft will still be sent.
    */
   isActionable: boolean;
+  /**
+   * True if the report sounds physically possible and realistic.
+   * False if it sounds like a prank, exaggeration, or impossibility (e.g., alien invasion).
+   */
+  isRealistic: boolean;
+  /** If isRealistic is false, a brief explanation of why the LLM flagged it as unrealistic. */
+  unrealisticReason: string | null;
 }
 
 /**
@@ -128,6 +135,8 @@ export interface StoredReport {
   /** Reply text with {TICKET_NUMBER} substituted. */
   resolvedReplyText: string | null;
   status: ReportStatus;
+  isRealistic: boolean;
+  unrealisticReason: string | null;
   createdAt: string; // ISO 8601
 }
 

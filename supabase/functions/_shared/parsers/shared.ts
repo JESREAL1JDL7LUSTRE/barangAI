@@ -65,6 +65,8 @@ JSON shape:
   "reply_draft": "<confirmation reply IN THE SAME LANGUAGE as the citizen's message — friendly, reassuring, short. Include the exact placeholder text {TICKET_NUMBER} where the ticket number should appear. If missing_fields is non-empty, ALSO include the follow-up question(s) naturally in the reply.>",
   "confidence": <float 0.0–1.0>,
   "is_actionable": <true if the message is a genuine concern, false if it's just a greeting like "Hi", "Hello", or useless noise>,
+  "is_realistic": <true if the report sounds physically possible and genuine, false if it sounds like a prank, exaggeration, or impossibility (e.g., alien invasion, monsters)>,
+  "unrealistic_reason": "<if is_realistic is false, brief reason why it is flagged as a prank/unrealistic, or null>",
   "missing_fields": [
     {
       "field": "<field name: location | affected_persons | summary | other>",
@@ -75,6 +77,7 @@ JSON shape:
 
 Missing fields and actionability rules:
   - **Actionability**: If the message is just a greeting ("Hi", "Hello") or useless noise, set "is_actionable" to false, and provide a "reply_draft" asking how you can help them (without the {TICKET_NUMBER} placeholder since no ticket will be created).
+  - **Believability**: If the report describes a crazy, impossible, or obvious prank scenario (e.g., zombie attack, flying pigs), set "is_realistic" to false and provide a reason. Note: Still extract the concern type based on the closest match (e.g. zombie attack = crime_security/unknown).
   - Analyze whether the message is missing CRITICAL information needed for the barangay to respond.
   - **Location**: REQUIRED for: flooding, fire, medical_emergency, crime_security, infrastructure, garbage_sanitation, noise_disturbance. NOT required for: general_inquiry, request_assistance, unknown. OPTIONAL for: missing_person. If partial location is provided, do NOT flag.
   - **Affected Persons**: Flag if a fire, severe flooding, or medical emergency is reported but it's unclear if people are trapped/injured.
@@ -107,10 +110,13 @@ Examples:
   Output: { "concern_type": "infrastructure", "urgency_level": "medium", "suggested_office": "Public Works", "missing_fields": [], ... }
 
   Input:  "Pila ang office hours sa barangay?"
-  Output: { "concern_type": "general_inquiry", "urgency_level": "low", "is_actionable": true, "missing_fields": [], ... }
+  Output: { "concern_type": "general_inquiry", "urgency_level": "low", "is_actionable": true, "is_realistic": true, "missing_fields": [], ... }
 
   Input:  "Hello po"
-  Output: { "concern_type": "unknown", "urgency_level": "low", "is_actionable": false, "reply_draft": "Hello! Unsaon namo pagtabang nimo karon? / Paano po kami makakatulong?", "missing_fields": [], ... }
+  Output: { "concern_type": "unknown", "urgency_level": "low", "is_actionable": false, "is_realistic": true, "reply_draft": "Hello! Unsaon namo pagtabang nimo karon? / Paano po kami makakatulong?", "missing_fields": [], ... }
+
+  Input:  "Tulong! May alien spaceships na bumababa sa kanto ng Mabini!"
+  Output: { "concern_type": "unknown", "urgency_level": "critical", "is_actionable": true, "is_realistic": false, "unrealistic_reason": "Claims an alien invasion is happening", "missing_fields": [], ... }
 `;
 
 // ---------------------------------------------------------------------------
@@ -160,6 +166,8 @@ export interface LLMExtraction {
   reply_draft: string | null;
   confidence: number;
   is_actionable?: boolean;
+  is_realistic?: boolean;
+  unrealistic_reason?: string | null;
   missing_fields: Array<{ field: string; question: string }>;
 }
 
@@ -192,6 +200,8 @@ export function extractionToParsedReport(
     replyDraft: extracted.reply_draft ?? null,
     confidence: extracted.confidence ?? 0,
     isActionable: extracted.is_actionable ?? true,
+    isRealistic: extracted.is_realistic ?? true,
+    unrealisticReason: extracted.unrealistic_reason ?? null,
     missingFields: (extracted.missing_fields ?? []).map((f) => ({
       field: f.field,
       question: f.question,

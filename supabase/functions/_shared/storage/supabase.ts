@@ -103,6 +103,8 @@ export function createSupabaseStorage(
         suggested_office: parsed.suggestedOffice,
         suggested_action: parsed.suggestedAction,
         llm_confidence: parsed.confidence,
+        is_realistic: parsed.isRealistic,
+        unrealistic_reason: parsed.unrealisticReason,
         auto_reply_text: resolvedReplyText,
         status: "new",
       })
@@ -119,6 +121,8 @@ export function createSupabaseStorage(
       parsedReport: parsed,
       resolvedReplyText,
       status: "new",
+      isRealistic: parsed.isRealistic,
+      unrealisticReason: parsed.unrealisticReason,
       createdAt: reportRow.created_at,
     };
   };
