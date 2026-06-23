@@ -44,6 +44,27 @@ The E2E suite is technically **passing** with zero failures. However, 12 tests a
 
 ---
 
+## Root Cause — Single Unapplied Migration
+
+**All schema gaps share a single root cause:** Migration `20240008_frontend_tables.sql` was defined in `supabase/migrations/` but **never applied** to the remote Supabase project.
+
+**Schema inspection completed 2026-06-23** via direct REST API queries:
+
+| Table | Remote Status | Equivalent Found? |
+|---|---|---|
+| `incidents` | ✅ Exists (7 cols from 20240005) | N/A |
+| `reports` | ✅ Exists (29 cols from 20240002-004) | N/A |
+| `raw_messages` | ✅ Exists (20240001) | N/A |
+| `pending_clarifications` | ✅ Exists (20240003) | N/A |
+| `personnel` | ❌ **Does not exist** | None (`responders`, `teams`, `patrols` not found) |
+| `system_logs` | ❌ **Does not exist** | None (`activity_logs`, `audit_logs`, `events` not found) |
+| `sms_reports` | ❌ **Does not exist** | None |
+| `profiles` | ❌ **Does not exist** | None |
+| `incidents.urgency` | ❌ **Does not exist** | None (`priority`, `severity`, `risk_level` not found) |
+| `incidents.latitude/longitude` | ❌ **Do not exist** | None (`lat`, `lng`, `location_lat` not found) |
+
+**Verdict:** No frontend column mapping is possible. All gaps require migration `20240008_frontend_tables.sql` to be applied.
+
 ## Observed Errors
 
 ### Missing `public.personnel` Table
@@ -59,20 +80,11 @@ The E2E suite is technically **passing** with zero failures. However, 12 tests a
 }
 ```
 
-**Impact:**
-- Map page cannot load personnel data for the sidebar / personnel list
-- Personnel dispatch controls may fail or show error state
-- Incident markers may still render if `incidents` query succeeds (if `latitude`/`longitude` columns exist)
+**Root cause confirmed:** Migration `20240008_frontend_tables.sql` not applied. No equivalent table exists.
 
-**Root cause:** The `public.personnel` table does not exist in the Supabase schema cache.
-
-**Recommended fix options:**
-
-| Category | Fix |
-|---|---|
-| Backend | Create `public.personnel` table with required columns (`id`, `name`, `status`, `team_name`, `created_at`) |
-| Frontend | Make `getPersonnel()` query non-blocking — show "Personnel data unavailable" instead of blocking the entire map |
-| Test | Allow map test to pass when incident map loads but personnel is missing (document as degraded mode) |
+**Fix:**
+- **Backend-only:** Apply migration `20240008_frontend_tables.sql` to create the `personnel` table
+- **Frontend (already done):** `getPersonnel()` throws gracefully — Map shows "Personnel data unavailable" degraded state
 
 ---
 
@@ -89,109 +101,51 @@ The E2E suite is technically **passing** with zero failures. However, 12 tests a
 }
 ```
 
-**Impact:**
-- Dashboard `useEffect` may fail entirely, preventing stats/incidents from rendering
-- Live alert / system log feed cannot show data
-- Realtime subscription on `system_logs` cannot work
-- Command Center logs section is also affected
+**Root cause confirmed:** Migration `20240008_frontend_tables.sql` not applied. No equivalent table exists.
 
-**Root cause:** The `public.system_logs` table does not exist in the Supabase schema cache.
-
-**Recommended fix options:**
-
-| Category | Fix |
-|---|---|
-| Backend | Create `public.system_logs` table with required columns (`id`, `message`, `incident_id`, `created_at`) |
-| Frontend | Make `getSystemLogs()` query non-blocking — dashboard stats/incidents should render even if logs are unavailable |
-| Test | Dashboard test should accept missing logs as degraded mode only if main dashboard content still renders |
+**Fix:**
+- **Backend-only:** Apply migration `20240008_frontend_tables.sql` to create the `system_logs` table
+- **Frontend (already done):** `getSystemLogs()` throws gracefully — Dashboard/Command Center show degraded states
+- **Frontend (already done):** `getDashboardStats()` non-blocking — missing tables don't block incident stats
 
 ---
 
 ### Command Center Incident Load Failure
 
-**Observed UI on `/command-center/$incidentId`:**
+**Root cause confirmed:** The incident detail route now handles missing IDs and UUID validation. The remaining gap is the unapplied schema — incident detail renders fine via `.select("*")`, but SMS/logs tabs are degraded because those tables don't exist.
 
-```
-Error loading incident
-Failed to load incident
-```
+**Fixes applied in Phase 1:**
+- Sidebar no longer navigates to `/command-center/demo`
+- `getIncidentById()` validates UUID format before querying
+- `getSmsReportsByIncident()` and `getSystemLogsByIncident()` are non-blocking
+- Error states distinguish `NOT_FOUND` / `SCHEMA_MISMATCH` / `NETWORK_ERROR`
 
-**Impact:**
-- Command Center page cannot render incident details
-- Dispatch button, broadcast form, SMS feed, and system logs are blocked
-- Data-dependent command center tests are skipped
-
-**Possible causes:**
-1. The route is navigated to without a real incident ID (e.g., `demo`)
-2. The incident ID exists in the URL but not in Supabase
-3. The `incidents` table exists but required columns are missing (`urgency`, `location_name`, etc.)
-4. `getIncidentById()` expects fields not present in the actual schema
-5. RLS policies reject reads because mock auth does not create a real Supabase auth session — `auth.uid()` may be null
-6. `system_logs` query in `Promise.all` rejects, cascading the entire load
-
-**Recommended fix options:**
-
-| Category | Fix |
-|---|---|
-| Frontend | Prevent sidebar Command Center link from navigating to an invalid dynamic route without a real incident ID |
-| Frontend | Improve command center error states: distinguish "not found", "data unavailable", "permission denied" instead of generic error |
-| Frontend | Separate the `system_logs` query from the critical path (incident + SMS) so a missing logs table does not block the page |
-| Backend | Add required columns to `incidents` table if missing (`urgency`, `location_name`, `latitude`, `longitude`) |
-| Backend/RLS | Ensure anon or mock-auth mode can read non-sensitive test data, or create a dedicated E2E test auth user |
-| Seed data | Add at least one deterministic test incident so the command center can load in CI |
+**Remaining fix:** Apply migration `20240008_frontend_tables.sql` to create `sms_reports` and `system_logs` tables.
 
 ---
 
 ### Missing or Mismatched `incidents.latitude`
 
-**Source:** Map page — `src/routes/map.tsx:28:9`, `src/lib/queries.ts:126` (`getMapIncidents()`)
+**Root cause confirmed:** Migration `20240008_frontend_tables.sql` not applied. No coordinate-like columns exist on `incidents` under any name.
 
-```
-code: '42703'
-message: 'column incidents.latitude does not exist'
-```
+**Fixes applied in Phase 1:**
+- `getMapIncidents()` falls back to `getIncidents()` when coordinate columns are missing
+- Map shows empty markers with a notice
 
-**Impact:**
-- `getMapIncidents()` query fails because it `SELECT`s a column that does not exist
-- Map cannot render incident markers
-- E2E map tests can only verify empty/error states, not actual markers
-
-**Root cause:** The `incidents` table exists but has no `latitude` column. The frontend query references `latitude` (and `longitude`).
-
-**Recommended fix options:**
-
-| Category | Fix |
-|---|---|
-| Backend | Add `latitude` and `longitude` columns to `incidents` |
-| Frontend | Check if existing schema uses different names (`lat`, `lng`, `location_lat`, `location_lng`, `coordinates`) and map the query accordingly |
-| Frontend | If coordinates are optional, use `.not("latitude", "is", null)` guard only when column exists, or skip the query gracefully |
+**Remaining fix:** Apply migration `20240008_frontend_tables.sql` to add `latitude` and `longitude` columns.
 
 ---
 
 ### Missing or Mismatched `incidents.urgency`
 
-**Source:** Dashboard (`getDashboardStats()`), Incidents page, Reports page
+**Root cause confirmed:** Migration `20240008_frontend_tables.sql` not applied. No priority/severity/risk_level equivalent exists on `incidents`.
 
-```
-[N/A — no explicit error logged, but queries return no data or incorrect data]
-```
+**Fixes applied in Phase 1:**
+- All incident queries use `.select("*")` with `?? "low"` fallback for missing `urgency`
+- `getDashboardStats()` uses `.select("*")` instead of explicit column select
+- Filtering by urgency (`.eq("urgency", ...)`) would fail at runtime but is behind user interaction
 
-**Impact:**
-- Incident cards/lists may not show priority correctly
-- Dashboard critical/high/medium/low stats may be wrong or fail
-- `urgency`-based filters may not work
-- Reports may not group incidents correctly
-- The `getCategories()` query (select `concern_type`) may still work, but urgency-aware features are broken
-
-**Root cause:** The `incidents` table exists but has no `urgency` column (or the column has a different name/type).
-
-**Recommended fix options:**
-
-| Category | Fix |
-|---|---|
-| Backend | Add an `urgency` column (ideally with a `CHECK` constraint or enum: `critical`, `high`, `medium`, `low`) |
-| Frontend | Check if existing schema uses `priority`, `severity`, or `risk_level` — map that field to frontend `urgency` type |
-| Frontend | Default missing urgency to `medium` only as a temporary UI fallback, and document the assumption |
+**Remaining fix:** Apply migration `20240008_frontend_tables.sql` to add `urgency` column.
 
 ---
 
@@ -308,13 +262,13 @@ These are more helpful than generic error text or empty sections.
 
 ### 6. Add Frontend Field Mapping for Existing Backend Columns
 
+**Status: INVESTIGATED — No mapping possible.**
+
 **Problem:** The frontend expects `latitude`, `longitude`, and `urgency` columns, but the backend may use different names.
 
-**Fix (investigate and map):**
-- Check if `incidents` uses `lat` / `lng` instead of `latitude` / `longitude`
-- Check if `incidents` uses `priority`, `severity`, or `risk_level` instead of `urgency`
-- If the columns exist under different names, update the frontend query column names — no migration needed
-- If the columns truly do not exist, log the specific mismatch and plan a migration
+**Investigation result (2026-06-23):** The remote schema was inspected via REST API. The `incidents` table has exactly 7 columns from migration `20240005_incidents.sql`. No `lat`/`lng`/`location_lat`/`priority`/`severity`/`risk_level` columns exist. No equivalent tables exist for `personnel`, `system_logs`, or `sms_reports`.
+
+**Conclusion:** All schema gaps originate from unapplied migration `20240008_frontend_tables.sql`. Frontend-only mapping is not possible.
 
 ### 7. Keep Mock Auth Mode for Page Testing
 
@@ -362,29 +316,29 @@ The seed data should be:
 
 ### Phase 1: Frontend-Only Hardening (No Schema Changes)
 
-| # | Task | Scope |
-|---|---|---|
-| 1 | Make `getSystemLogs()` and `getPersonnel()` queries non-blocking | Frontend |
-| 2 | Add degraded UI states for missing optional data | Frontend |
-| 3 | Fix `--:--` time fallback | Frontend |
-| 4 | Prevent invalid Command Center sidebar navigation | Frontend |
-| 5 | Improve command center error states (not found vs. error vs. permission) | Frontend |
-| 6 | Check whether `incidents` schema has `lat`/`lng`/`priority`/`severity` columns under different names | Investigation |
-| 7 | If different column names exist, remap frontend queries | Frontend |
+| # | Task | Scope | Status |
+|---|---|---|---|
+| 1 | Make `getSystemLogs()` and `getPersonnel()` queries non-blocking | Frontend | ✅ Done |
+| 2 | Add degraded UI states for missing optional data | Frontend | ✅ Done |
+| 3 | Fix `--:--` time fallback | Frontend | ✅ Done |
+| 4 | Prevent invalid Command Center sidebar navigation | Frontend | ✅ Done |
+| 5 | Improve command center error states (not found vs. error vs. permission) | Frontend | ✅ Done |
+| 6 | Check whether `incidents` schema has equivalent columns under different names | Investigation | ✅ Done — no equivalents found |
+| 7 | If different column names exist, remap frontend queries | Frontend | ✅ Skipped — no equivalents exist, no mapping possible |
 
 **Why first:** These fixes improve the user experience immediately, do not require backend coordination, and make subsequent E2E validation more robust.
 
 ### Phase 2: Schema Alignment
 
-| # | Task | Scope |
-|---|---|---|
-| 1 | Add `public.personnel` table | Migration |
-| 2 | Add `public.system_logs` table | Migration |
-| 3 | Add `latitude`/`longitude` to `incidents` (if missing) | Migration |
-| 4 | Add `urgency` to `incidents` (if missing) | Migration |
-| 5 | Review and adjust RLS policies if mock-auth reads are blocked | Migration / Backend |
+| # | Task | Scope | Status |
+|---|---|---|---|
+| 1 | Apply migration `20240008_frontend_tables.sql` to remote Supabase | Migration | [ ] Pending — creates ALL missing tables and columns |
+| 2 | Confirm `personnel`, `system_logs`, `sms_reports`, `profiles` tables exist | Verification | [ ] Pending |
+| 3 | Confirm `urgency`, `latitude`, `longitude`, `location_name` columns on `incidents` | Verification | [ ] Pending |
+| 4 | Review and add RLS policies if mock-auth reads are blocked | Migration / Backend | [ ] Pending |
+| 5 | Run E2E suite — expect data-dependent skipped tests to unblock | Verification | [ ] Pending |
 
-**Why second:** Backend schema changes unblock data-dependent frontend features and E2E tests.
+**Why second:** Backend schema changes unblock data-dependent frontend features and E2E tests. All missing schema originates from a single unapplied migration (`20240008_frontend_tables.sql`), so applying it is the complete fix.
 
 ### Phase 3: Seed Test Data
 

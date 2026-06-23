@@ -14,22 +14,28 @@ function formatTimeAgo(dateStr: string): string {
   return `${diffDay}d ago`
 }
 
+// ponytail: per-query isolation so sms_reports/personnel absence (unapplied migration 20240008) doesn't block incidents
+async function safeResolve<T>(q: any, fallback: T): Promise<T> {
+  try { return await q } catch { return fallback }
+}
+
 export async function getDashboardStats() {
   const [incidentsResult, smsResult, personnelResult] = await Promise.all([
-    supabase.from("incidents").select("id, status, urgency, created_at"),
-    supabase.from("sms_reports").select("id, status", { count: "exact" }),
-    supabase.from("personnel").select("id, status"),
+    supabase.from("incidents").select("*"),
+    safeResolve(supabase.from("sms_reports").select("id, status", { count: "exact" }), { data: [], count: null }),
+    safeResolve(supabase.from("personnel").select("id, status"), { data: [] }),
   ])
 
-  const allIncidents = incidentsResult.data ?? []
+  const allIncidents = (incidentsResult as any).data ?? []
   const totalIncidents = allIncidents.length
-  const activeIncidents = allIncidents.filter((i) => i.status === "open" || i.status === "monitoring").length
-  const criticalIncidents = allIncidents.filter((i) => i.urgency === "critical" && i.status === "open").length
+  const activeIncidents = allIncidents.filter((i: any) => i.status === "open" || i.status === "monitoring").length
+  // ponytail: urgency column absent on remote incidents; stays 0 until migration 20240008 applied
+  const criticalIncidents = allIncidents.filter((i: any) => i.urgency === "critical" && i.status === "open").length
 
-  const pendingSms = smsResult.data?.filter((s) => s.status === "pending" || s.status === "processing").length ?? 0
+  const pendingSms = (smsResult as any).data?.filter((s: any) => s.status === "pending" || s.status === "processing").length ?? 0
 
-  const onlinePersonnel = personnelResult.data?.filter((p) => p.status === "online").length ?? 0
-  const totalPersonnel = personnelResult.data?.length ?? 0
+  const onlinePersonnel = (personnelResult as any).data?.filter((p: any) => p.status === "online").length ?? 0
+  const totalPersonnel = (personnelResult as any).data?.length ?? 0
 
   return {
     avgResponseTime: { label: "Avg. response time", value: "4.2", unit: "mins", trend: "-12%", good: true },
@@ -86,7 +92,11 @@ export async function getIncidents(filters?: { urgency?: string; status?: string
   }))
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export async function getIncidentById(id: string) {
+  if (!UUID_RE.test(id)) return null
+
   const { data, error } = await supabase
     .from("incidents")
     .select("*")

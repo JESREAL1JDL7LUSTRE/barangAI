@@ -4,29 +4,85 @@
 
 - **Project:** LihokBarangAI / BarangAI — React + Vite + TanStack Router connected to Supabase
 - **Phase 1 (frontend hardening):** Complete — optional data queries are non-blocking, degraded UI states display gracefully, Command Center navigation is safe, `--:--` fallback is fixed, and Error states distinguish `NOT_FOUND` / `SCHEMA_MISMATCH` / `PERMISSION_DENIED` / `NETWORK_ERROR`
+- **Phase 1 frontend mapping:** Complete — all schema gaps investigated; root cause identified
 - **Mock auth mode:** Working — `VITE_ENABLE_MOCK_AUTH=true` lets all protected pages render without a real Supabase Auth session
 - **E2E status:**
   ```
   29 passed
   12 skipped
-   0 failed
+    0 failed
   ```
   All 29 active tests pass. The 12 skipped are expected (6 real-auth tests, 6 data-dependent tests blocked by incomplete schema/seed data).
 
+## Actual Remote Schema (Inspected 2026-06-23)
+
+### Tables That Exist
+
+#### `incidents` (7 columns from migration 20240005)
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid PK | |
+| `title` | text | |
+| `concern_type` | text | |
+| `location_zone` | text | |
+| `status` | text | |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+**Missing columns (defined in unapplied migration 20240008):** `urgency`, `location_name`, `latitude`, `longitude`, `assigned_personnel_id`, `barangay_id`
+
+#### `reports` (29 columns from migration 2024002-20240004)
+Key columns: `id`, `ticket_number`, `raw_message_id`, `citizen_ref`, `channel`, `concern_type`, `location_raw`, `location_zone`, `location_landmark`, **`urgency_level`**, `summary`, `affected_persons`, `original_language`, `suggested_office`, `suggested_action`, `llm_confidence`, `auto_reply_text`, `auto_reply_sent`, `staff_reply_text`, `staff_reply_sent`, `status`, `assigned_office`, `created_at`, `updated_at`, `resolved_at`, `is_realistic`, `unrealistic_reason`, `incident_id`, `summary_embedding`
+
+#### `raw_messages` (from migration 20240001)
+#### `pending_clarifications` (from migration 20240003)
+
+### Tables That Do NOT Exist
+
+| Table | Defined In | Status |
+|-------|-----------|--------|
+| `sms_reports` | migration 20240008 | **Not applied** — no equivalent table exists |
+| `personnel` | migration 20240008 | **Not applied** — no equivalent table exists |
+| `system_logs` | migration 20240008 | **Not applied** — no equivalent table exists |
+| `profiles` | migration 20240008 | **Not applied** — no equivalent table exists |
+
+### Migrations Applied vs. Missing
+
+| Migration | Applied? | Content |
+|-----------|---------|---------|
+| `20240001_raw_messages.sql` | ✅ Yes | `raw_messages` table |
+| `20240002_reports.sql` | ✅ Yes | `reports` table (initial) |
+| `20240003_clarifications.sql` | ✅ Yes | `pending_clarifications`, `report_clarifications` |
+| `20240004_reports_location_office.sql` | ✅ Yes | Added `location_landmark`, `suggested_office`, `suggested_action` |
+| `20240005_incidents.sql` | ✅ Yes | `incidents` table (7 columns only) |
+| `20240006_clustering_fixes.sql` | ✅ Yes | `match_similar_reports` function fix |
+| `20240007_update_vector_dim.sql` | ✅ Yes | vector dim 768→3072, updated function |
+| `20240008_frontend_tables.sql` | **❌ No** | `profiles`, `sms_reports`, `personnel`, `system_logs` + `incidents` columns (`urgency`, `location_name`, `latitude`, `longitude`, etc.) |
+
+### Key Findings
+
+1. **Migration `20240008_frontend_tables.sql` was never applied.** This single migration contains ALL missing tables and columns the frontend needs.
+2. **No equivalent tables exist.** Searched for `responders`, `teams`, `patrols`, `response_units`, `activity_logs`, `audit_logs`, `events`, `incident_logs` — none exist.
+3. **No equivalent column names.** Checked for `priority`, `severity`, `risk_level`, `lat`, `lng`, `location_lat`, `location_lng` on `incidents` — none exist.
+4. **`reports.urgency_level`** exists with values `critical|high|medium|low` but is on the `reports` table, not `incidents`. Structurally too different to map frontend-side.
+5. **`reports.location_zone`** and `reports.location_raw` exist but provide text-based location, not coordinates.
+6. **ALL schema gaps have a single root cause:** unapplied migration `20240008_frontend_tables.sql`. No naming mismatch or equivalent-table scenario.
+
 ## Why Phase 2 Is Needed
 
-Phase 1 made the app **survive** broken backend dependencies. Pages render, the navigation works, and error states are human-readable. But the app cannot fully function until the Supabase schema matches what the frontend queries.
+Phase 1 made the app **survive** broken backend dependencies. Pages render, the navigation works, and error states are human-readable. Schema inspection confirmed that **no equivalent tables or columns exist under different names** — the gaps are genuine missing schema, not naming mismatches.
 
 Without Phase 2:
 
-- The map cannot show real incident markers (no coordinates)
-- The dashboard cannot show urgency-based stats (no urgency column)
-- The command center cannot load incident details (missing related tables)
-- Personnel dispatch is entirely blocked (missing personnel table)
+- The map cannot show real incident markers (no coordinates on `incidents`)
+- The dashboard cannot show urgency-based stats (`incidents` has no `urgency` column)
+- `getDashboardStats()` returns zeroes for SMS/personnel (tables don't exist)
+- The command center cannot load SMS or logs (tables don't exist)
+- Personnel dispatch is entirely blocked (no `personnel` table)
 - Realtime subscriptions for `system_logs` and `personnel` do nothing
 - Every data-backed E2E test stays skipped
 
-Phase 2 aligns the database schema with what the frontend and backend edge functions expect, making the app actually operable.
+Phase 2 aligns the database schema with what the frontend and backend edge functions expect, making the app actually operable. The fix is clear: **apply migration `20240008_frontend_tables.sql` to add all missing tables and columns at once.**
 
 ## Important Warning: Do Not Blindly Create Tables or Columns
 
@@ -80,139 +136,37 @@ The route-level queries are:
 | Command Center | `getSystemLogsByIncident(id)` | `system_logs` |
 | Reports | `getSmsReports(50)` | `sms_reports` |
 
-## Known Schema Gaps
+## Schema Investigation Completed — Confirmed Findings
 
-### 1. Missing or Mismatched `public.personnel`
+The remote Supabase schema was inspected via direct REST API queries (`/rest/v1/` table listing + `?select=` column tests on all known tables). The decision matrix results are definitive:
 
-**Frontend expectation:** A `personnel` table with `id`, `team_name`, `current_location`, `status`, etc.
+| Gap | Frontend Expects | Actual Schema | Verdict |
+|---|---|---|---|
+| personnel | `personnel` table | **Does not exist.** No `responders`, `teams`, `patrols`, `response_units` equivalent | **Migration required** |
+| system_logs | `system_logs` table | **Does not exist.** No `activity_logs`, `audit_logs`, `events`, `incident_logs` equivalent | **Migration required** |
+| sms_reports | `sms_reports` table | **Does not exist.** No equivalent table | **Migration required** |
+| coordinates | `latitude`, `longitude` on incidents | **Do not exist.** No `lat`, `lng`, `location_lat`, PostGIS geom | **Migration required** |
+| urgency | `urgency` column on incidents | **Does not exist.** No `priority`, `severity`, `risk_level` | **Migration required** |
+| profiles | `profiles` table | **Does not exist.** Auth is not set up | **Migration required** |
 
-**Error observed:**
-```
-Could not find the table 'public.personnel' in the schema cache
-```
+### Root Cause
 
-**Why this error happens:** The `getPersonnel()` query in `src/lib/queries.ts` calls `supabase.from("personnel").select("*")`. If no table named `personnel` exists in `public`, Supabase returns error code `PGRST205`.
+Migration `20240008_frontend_tables.sql` defines ALL missing tables and columns but was **never applied** to the remote Supabase project. This is a deployment gap, not a naming mismatch.
 
-**What to check first:**
-- Does a table named `responders`, `teams`, `patrols`, `response_units`, or `deployment_teams` exist?
-- Does the `assignPersonnelToIncident()` edge function already write to a differently named table?
-- Is there a user profile table that already stores role/team information?
+### Frontend-Only Fixes Already Applied
 
-**Possible without migration:**
-- If an equivalent table exists with columns that map to the frontend `Personnel` type, update the query in `queries.ts` to use the existing table name and column mapping.
-- If no personnel tracking exists yet, the Phase 1 degraded state ("Personnel data unavailable") can remain indefinitely.
+- `getDashboardStats()`: Made `sms_reports` and `personnel` queries non-blocking so incident stats render even when those tables are absent
+- `getIncidents()` / `getRecentIncidents()`: Uses `.select("*")` and `?? "low"` fallback for missing `urgency`
+- `getIncidentById()`: Uses `.select("*")` — no explicit column dependency
+- `getMapIncidents()`: Falls back to `getIncidents()` when coordinate columns are missing
+- `getSmsReportsByIncident()` / `getSystemLogsByIncident()`: Non-blocking in command center
+- All missing tables show degraded UI states: "Personnel data unavailable", "Logs unavailable", etc.
 
-**Migration justified when:**
-- No equivalent table exists
-- Edge functions need a stable target for personnel operations
-- The realtime subscription needs the correct table name
+### What Remains for Backend
 
-**Risk of wrong fix:**
-- Creating `personnel` when `responders` already exists creates two sources of truth
-- Any edge functions that write to `responders` would need to also write to `personnel`, or the UI would show stale data
+**Apply migration `20240008_frontend_tables.sql`.** This single migration creates all missing tables and adds all missing columns. It is idempotent (uses `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
 
----
-
-### 2. Missing or Mismatched `public.system_logs`
-
-**Frontend expectation:** A `system_logs` table with `id`, `message`, `incident_id`, `created_at`.
-
-**Error observed:**
-```
-Could not find the table 'public.system_logs' in the schema cache
-```
-
-**Why this error happens:** The `getSystemLogs()` and `getSystemLogsByIncident()` queries target `system_logs`. If no such table exists, Supabase returns `PGRST205`.
-
-**What to check first:**
-- Does `activity_logs`, `audit_logs`, `events`, `incident_logs`, or `notification_logs` exist?
-- Does the `assignPersonnelToIncident()` function already write log entries somewhere?
-- Are there edge functions that produce log-like data?
-
-**Possible without migration:**
-- If an equivalent table exists, remap the frontend queries.
-- The Phase 1 degraded state ("System logs unavailable", "Logs unavailable") handles missing logs gracefully.
-
-**Migration justified when:**
-- No equivalent log table exists
-- The realtime subscription for `system_logs` needs to work
-- The command center's system log section should show operational data
-- The `assignPersonnelToIncident()` function's best-effort log insert needs a real target
-
-**Risk of wrong fix:**
-- Creating `system_logs` when `activity_logs` already exists duplicates log storage
-- Multiple log tables make it harder to build a unified audit trail
-- Edge functions that write to the existing log table would not appear in the UI until both tables are updated
-
----
-
-### 3. Missing or Mismatched `incidents.latitude` and `incidents.longitude`
-
-**Frontend expectation:** The `incidents` table has `latitude` and `longitude` columns (double precision, nullable).
-
-**Error observed:**
-```
-column incidents.latitude does not exist
-```
-
-**Why this error happens:** The `getMapIncidents()` query explicitly selects `latitude` and `longitude`. If either column is absent, PostgreSQL returns error code `42703`.
-
-**What to check first:**
-- Does the `incidents` table have columns named `lat`, `lng`, `location_lat`, `location_lng`?
-- Does it have a PostGIS `geometry(Point, 4326)` column or a `coordinates` JSON field?
-- Does it have an address/location text field but no coordinates at all?
-- Are coordinates stored in a `locations` or `addresses` join table?
-
-**Possible without migration:**
-- If columns exist under different names (e.g., `lat`/`lng`), update the frontend query to use those names.
-- If coordinates are embedded in a JSON column, extract them with Supabase JSON operators (e.g., `->>'lat'`).
-- If PostGIS is used, create a database view or an RPC that projects `ST_X(geom)` / `ST_Y(geom)` as `latitude`/`longitude`.
-- If no coordinates exist, the map shows an empty state — this is acceptable until a geocoding pipeline is built.
-
-**Migration justified when:**
-- The table has no coordinate columns at all (no name variant, no JSON, no PostGIS)
-- A geocoding pipeline is ready to backfill coordinates
-- The business requirement for map markers is prioritized
-
-**Risk of wrong fix:**
-- Adding `latitude`/`longitude` when PostGIS `geometry` already exists creates redundant data that can drift
-- Adding columns without a backfill plan leaves every existing row with null coordinates — the map stays empty anyway
-- Choosing the wrong column name (e.g., `lat` when the frontend needs `latitude`) just shifts the error
-
----
-
-### 4. Missing or Mismatched `incidents.urgency`
-
-**Frontend expectation:** The `incidents` table has an `urgency` column (type expected to be one of: `critical`, `high`, `medium`, `low`).
-
-**Observed behavior:** No explicit SQL error, but urgency-dependent features may not work correctly. The `getDashboardStats()` query selects `urgency`; if the column does not exist, the query itself may succeed (because `select(*)` returns all columns) but `row.urgency` is `undefined`, and defaults to `"low"` in the frontend mapping.
-
-**What to check first:**
-- Does the `incidents` table have columns named `priority`, `severity`, `risk_level`, or `classification`?
-- Is urgency derived from an AI/ML score stored in a numeric field like `ai_urgency_score`?
-- Is urgency generated by an edge function or database trigger?
-
-**Possible without migration:**
-- If `priority`, `severity`, or `risk_level` exists, map it to `urgency` in `queries.ts`. Example:
-  ```typescript
-  const urgency = row.priority ?? row.severity ?? "low"
-  ```
-- If urgency is a numeric score, define a threshold mapping:
-  ```typescript
-  const urgency = row.urgency_score >= 8 ? "critical" : row.urgency_score >= 5 ? "high" : row.urgency_score >= 3 ? "medium" : "low"
-  ```
-- If no priority field exists, the `?? "low"` default is an acceptable temporary state.
-
-**Migration justified when:**
-- No equivalent priority/severity/risk_level field exists
-- The business requires urgency-based filtering and dashboard stats
-- Reports need accurate urgency grouping
-- AI-generated urgency needs a stable column to write to
-
-**Risk of wrong fix:**
-- Adding `urgency` when `priority` already exists creates two columns expressing the same concept
-- An enum mismatch (e.g., `"critical"` vs `"emergency"` vs `"level-1"`) can break frontend filters
-- If urgency is computed (e.g., by ML), storing it in a column requires a trigger or scheduled job to keep it fresh
+After applying, re-run the E2E suite — 6 data-dependent tests should unblock and become passable once seed data exists (Phase 3).
 
 ---
 
@@ -568,49 +522,52 @@ create policy "authenticated users can insert incidents"
 | Create an entirely new incidents table | The `incidents` table already exists — only add missing columns |
 | Remove the Phase 1 degraded UI | Degraded states remain as safety nets even after schema alignment |
 
-## Recommended Phase 2 Checklist
+## Phase 2 Checklist Status
 
 ```
-[ ] 1. Inspect existing Supabase schema via dashboard or CLI
-[ ] 2. Check existing migrations in supabase/migrations/
-[ ] 3. Check edge function table references in supabase/functions/
-[ ] 4. Compare actual schema with frontend expectations (queries.ts + types.ts)
-[ ] 5. Identify equivalent tables/columns under different names
-[ ] 6. Decide mapping vs. migration for each gap
-[ ] 7. Write a schema plan document
+[x] 1. Inspect existing Supabase schema via dashboard or CLI
+[x] 2. Check existing migrations in supabase/migrations/
+[x] 3. Check edge function table references in supabase/functions/
+[x] 4. Compare actual schema with frontend expectations (queries.ts + types.ts)
+[x] 5. Identify equivalent tables/columns under different names — NONE FOUND
+[x] 6. Decide mapping vs. migration for each gap — ALL require migration
+[x] 7. Write schema plan document (this guide updated with findings)
 [ ] 8. For each migration candidate:
-    [ ] a. Confirm no existing equivalent exists
-    [ ] b. Create idempotent migration (IF NOT EXISTS)
+    [x] a. Confirm no existing equivalent exists — DONE
+    [ ] b. Create or apply idempotent migration (migration 20240008 already exists)
     [ ] c. Add permissive RLS policy for anon reads
     [ ] d. Run migration locally (supabase db reset)
-[ ] 9. Update frontend queries for any column mapping decisions
+[ ] 9. Update frontend queries — NONE needed beyond Phase 1 hardening
 [ ] 10. Run typecheck, lint, build
 [ ] 11. Run E2E suite (expect 29+ passed, fewer skipped)
 [ ] 12. Update SUPABASE_E2E_ISSUES.md with resolved items
 [ ] 13. Commit schema changes separately from frontend mapping changes
 ```
 
-## Example Decision Matrix
+## Decision Matrix — Confirmed
 
-| Gap | Frontend Expects | Check for | Decision Logic |
-|---|---|---|---|
-| personnel | `personnel` table | `responders`, `teams`, `patrols` | If exists → remap query. If not → create `personnel` |
-| system_logs | `system_logs` table | `activity_logs`, `audit_logs`, `events` | If exists → remap query. If not → create `system_logs` |
-| coordinates | `latitude`, `longitude` | `lat`, `lng`, `location_lat`, `location_lng`, PostGIS geom | If exists → remap query. If PostGIS → use RPC/view. If none → add columns |
-| urgency | `urgency` column | `priority`, `severity`, `risk_level`, numeric score | If exists → remap query. If none → add column |
-| Command Center | Incident detail + SMS + logs | Valid incident ID, RLS permissions | If ID is fake → fixed in Phase 1. If RLS → use real auth or adjust policy. If schema → fix gap above |
+| Gap | Frontend Expects | Actual | Decision | Notes |
+|---|---|---|---|---|
+| personnel | `personnel` table | **Does not exist** | Apply migration 20240008 | No responder/team/patrol equivalent exists |
+| system_logs | `system_logs` table | **Does not exist** | Apply migration 20240008 | No activity/audit/event log equivalent exists |
+| sms_reports | `sms_reports` table | **Does not exist** | Apply migration 20240008 | Table is defined in 20240008 |
+| coordinates | `latitude`, `longitude` | **Do not exist** | Apply migration 20240008 | No coordinate variant or PostGIS column exists |
+| urgency | `urgency` column on `incidents` | **Does not exist** | Apply migration 20240008 | No priority/severity/risk_level variant exists |
+| profiles | `profiles` table | **Does not exist** | Apply migration 20240008 | Table is defined in 20240008 |
+| Command Center | Incident detail + SMS + logs | Schema incomplete | Apply migration 20240008 | Phase 1 fixed navigation; schema gap remains |
+| Dashboard stats | Incidents + SMS + personnel | Partial data | Phase 1 hardening + migration 20240008 | `getDashboardStats()` now non-blocking for missing tables |
 
 ## Acceptance Criteria for Phase 2
 
-1. **Schema inspection is complete** before any migration is written
-2. **No duplicate tables** are created — every new table name is confirmed to not already exist
-3. **No destructive schema changes** are made — no `DROP`, no `RENAME`, no `ALTER COLUMN TYPE`
-4. **Frontend mappings are used where appropriate** — a column remap in `queries.ts` is preferred over a schema change
-5. **Missing required tables/columns are clearly identified** — if a migration is needed, the rationale is documented
-6. **Every migration is idempotent** — running it multiple times is safe (`IF NOT EXISTS`)
-7. **RLS policy decisions are documented** — permissive read policies for development are intentional
-8. **E2E still passes in mock-auth mode** — the 29-test baseline is maintained or improved
-9. **Data-dependent skipped tests can be enabled after Phase 3** — schema changes do not block future seed data
+1. ✅ **Schema inspection is complete** — remote schema directly inspected via REST API
+2. ✅ **No duplicate tables would be created** — confirmed no equivalent tables exist
+3. ✅ **No destructive schema changes needed** — migration 20240008 uses `CREATE TABLE IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS`
+4. ✅ **Frontend mappings checked** — no equivalent columns exist; migration is the only path
+5. ✅ **Missing tables/columns clearly identified** — all gaps originate from unapplied migration 20240008
+6. [ ] **Every migration is idempotent** — migration 20240008 already uses `IF NOT EXISTS`
+7. [ ] **RLS policy decisions are documented** — permissive read policies for development are intentional
+8. ✅ **E2E still passes in mock-auth mode** — 29-pass baseline maintained (verified)
+9. [ ] **Data-dependent skipped tests can be enabled after Phase 3** — schema changes do not block future seed data
 
 ## What Comes After Phase 2
 

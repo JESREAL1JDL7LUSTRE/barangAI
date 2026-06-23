@@ -62,11 +62,21 @@ function IncidentError({ message }: { message: string }) {
 }
 
 function getIncidentErrorKind(err: unknown): string {
+  // PostgrestError (Supabase) is not an Error instance — check by shape
+  if (typeof err === "object" && err !== null && "code" in err && "message" in err) {
+    const pgErr = err as { code: string; message: string }
+    const m = pgErr.message
+    if (pgErr.code === "PGRST205" || m.includes("Could not find the table")) return "SCHEMA_MISMATCH"
+    if (pgErr.code === "42501" || m.includes("permission denied") || m.includes("violates row-level security")) return "PERMISSION_DENIED"
+    if (pgErr.code === "PGRST116" || pgErr.code === "22P02") return "NOT_FOUND"
+    if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("network")) return "NETWORK_ERROR"
+    return m
+  }
   if (err instanceof Error) {
     const m = err.message
     if (m.includes("PGRST205") || m.includes("Could not find the table")) return "SCHEMA_MISMATCH"
     if (m.includes("42501") || m.includes("permission denied") || m.includes("violates row-level security")) return "PERMISSION_DENIED"
-    if (m.includes("PGRST116")) return "NOT_FOUND"
+    if (m.includes("PGRST116") || m.includes("22P02")) return "NOT_FOUND"
     if (m.includes("Failed to fetch") || m.includes("NetworkError") || m.includes("network")) return "NETWORK_ERROR"
     return m
   }
@@ -80,6 +90,7 @@ function CommandCenter() {
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [smsUnavailable, setSmsUnavailable] = useState(false)
   const [logsUnavailable, setLogsUnavailable] = useState(false)
 
   const liveSms = useRealtimeTable("sms_reports", smsReports)
@@ -88,22 +99,30 @@ function CommandCenter() {
   useEffect(() => {
     async function load() {
       try {
-        const [inc, sms] = await Promise.all([
-          getIncidentById(incidentId),
-          getSmsReportsByIncident(incidentId),
-        ])
+        const inc = await getIncidentById(incidentId)
         if (!inc) {
           setError("NOT_FOUND")
           return
         }
         setIncident(inc)
-        setSmsReports(sms)
       } catch (err) {
+        console.error("Incident detail load error:", err)
         setError(getIncidentErrorKind(err))
         return
       } finally {
         setLoading(false)
       }
+
+      getSmsReportsByIncident(incidentId)
+        .then((data) => {
+          setSmsReports(data)
+          setSmsUnavailable(false)
+        })
+        .catch((err) => {
+          console.error("SMS reports unavailable:", err)
+          setSmsReports([])
+          setSmsUnavailable(true)
+        })
 
       getSystemLogsByIncident(incidentId)
         .then((data) => {
@@ -185,7 +204,13 @@ function CommandCenter() {
           </div>
           <div className="mt-6">
             <h2 className="mb-4 flex items-center gap-2 text-lg font-bold">Raw SMS Feed</h2>
-            <SmsFeedTable entries={smsEntries} />
+            {smsUnavailable ? (
+              <p className="text-sm text-muted-foreground">SMS reports unavailable</p>
+            ) : smsEntries.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No linked SMS reports</p>
+            ) : (
+              <SmsFeedTable entries={smsEntries} />
+            )}
           </div>
         </SectionCard>
         <aside className="grid content-start gap-5">
